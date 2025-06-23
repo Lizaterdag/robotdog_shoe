@@ -1,0 +1,15 @@
+
+footholds:
+	- high sleeves
+	- bolt (with boots)
+	- shoelace (with low foothold)
+	
+middle layer:
+	- foam mat
+	- air bubble layer
+	
+sole:
+	- toe beans (thin TPU for softness)
+	- polyurethane foam (spray)
+	- web structure
+	- neoprene

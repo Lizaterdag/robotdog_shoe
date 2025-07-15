@@ -1,0 +1,37 @@
+Timeline:
+
+15.07.-20.07.
+- add noise detection [Lilly]
+- sac & ppo (stable baselines) [Liza]
+- set up the control via the laptop [Lilly]
+
+
+21.07.-27.07.
+- simulation for crouching [Liza]
+- hardware for crouching [Lilly]
+- develop the algorithm [Liza]
+- reward shaping [both]
+
+28.07.-03.08.
+Training
+
+04.08.-10.08.
+Last start date for the physical experiments
+11.08.-17.08.
+18.08.-26.08.
+
+27.08.-12.09. Draft writing + Final experiments
+13.09. Final Draft complete
+15.09. Deadline
+
+Todo:
+- research (on simulation etc) [Liza]
+- test behaviour [Liza in simulation, Lilly in hardware]
+- add noise detection [Lilly]
+- set up the control via the laptop [Lilly]
+- reward shaping [both]
+- morphological optimisation [Lilly]
+ 
+
+RL algorithm:
+PPO, SAC

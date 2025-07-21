@@ -76,6 +76,7 @@
   </asset>
 
   <worldbody>
+    <geom name="floor" type="plane" size="10 10 0.1" rgba="0.2 0.3 0.4 1" friction="1.0 0.005 0.0001" />
     <light name="spotlight" mode="targetbodycom" target="trunk" pos="0 -1 2" />
     <body name="trunk" pos="0 0 0.445" childclass="go1">
       <camera name="tracking" mode="trackcom" pos="0 -1 0.8" xyaxes="1 0 0 0 1 1" />
@@ -123,8 +124,8 @@
                 <geom name="FR_tpu" type="box" size="0.04 0.03 0.0025" pos="0 0 -0.0225" rgba="0.6 0.6 0.6 1" friction="0.9 0.01 0.001" solimp="0.95 0.99 0.001" solref="0.005 1" />
               </body>
               <geom name="FR_airgap" type="box" size="0.04 0.03 0.0125" pos="0 0 -0.0375" rgba="0.2 0.2 1 0.1" friction="0.1 0.01 0.001" solimp="0.9 0.95 0.001" solref="0.01 1" />
-              <geom name="FR_foam" type="box" size="0.04 0.03 0.012" pos="0 0 -0.0615" rgba="0.3 0.3 0.3 1" friction="0.6 0.01 0.001" solimp="0.9 0.95 0.001" solref="0.01 1" />
-              <geom name="FR_silicone" type="box" size="0.04 0.03 0.005" pos="0 0 -0.0815" rgba="0.8 0.8 0.2 1" friction="0.9 0.01 0.001" solimp="0.9 0.95 0.001" solref="0.01 1" />
+              <geom name="FR_foam" type="box" size="0.04 0.03 0.012" pos="0 0 -0.0615" rgba="0.3 0.3 0.3 1" friction="0.6 0.01 0.001" solimp="0.9 0.99 0.001" solref="0.02 1" />
+              <geom name="FR_silicone" type="box" size="0.04 0.03 0.005" pos="0 0 -0.0815" rgba="0.8 0.8 0.2 1" friction="0.9 0.01 0.001" solimp="0.9 0.99 0.001" solref="0.02 1" />
             </body>
           </body>
         </body>
@@ -160,8 +161,8 @@
                 <geom name="FL_tpu" type="box" size="0.04 0.03 0.0025" pos="0 0 -0.0225" rgba="0.6 0.6 0.6 1" friction="0.9 0.01 0.001" solimp="0.95 0.99 0.001" solref="0.005 1" />
               </body>
               <geom name="FL_airgap" type="box" size="0.04 0.03 0.0125" pos="0 0 -0.0375" rgba="0.2 0.2 1 0.1" friction="0.1 0.01 0.001" solimp="0.9 0.95 0.001" solref="0.01 1" />
-              <geom name="FL_foam" type="box" size="0.04 0.03 0.012" pos="0 0 -0.0615" rgba="0.3 0.3 0.3 1" friction="0.6 0.01 0.001" solimp="0.9 0.95 0.001" solref="0.01 1" />
-              <geom name="FL_silicone" type="box" size="0.04 0.03 0.005" pos="0 0 -0.0815" rgba="0.8 0.8 0.2 1" friction="0.9 0.01 0.001" solimp="0.9 0.95 0.001" solref="0.01 1" />
+              <geom name="FL_foam" type="box" size="0.04 0.03 0.012" pos="0 0 -0.0615" rgba="0.3 0.3 0.3 1" friction="0.6 0.01 0.001" solimp="0.9 0.99 0.001" solref="0.02 1" />
+              <geom name="FL_silicone" type="box" size="0.04 0.03 0.005" pos="0 0 -0.0815" rgba="0.8 0.8 0.2 1" friction="0.9 0.01 0.001" solimp="0.9 0.99 0.001" solref="0.02 1" />
             </body>
           </body>
         </body>
@@ -198,8 +199,8 @@
                 <geom name="RR_tpu" type="box" size="0.04 0.03 0.0025" pos="0 0 -0.0225" rgba="0.6 0.6 0.6 1" friction="0.9 0.01 0.001" solimp="0.95 0.99 0.001" solref="0.005 1" />
               </body>
               <geom name="RR_airgap" type="box" size="0.04 0.03 0.0125" pos="0 0 -0.0375" rgba="0.2 0.2 1 0.1" friction="0.1 0.01 0.001" solimp="0.9 0.95 0.001" solref="0.01 1" />
-              <geom name="RR_foam" type="box" size="0.04 0.03 0.012" pos="0 0 -0.0615" rgba="0.3 0.3 0.3 1" friction="0.6 0.01 0.001" solimp="0.9 0.95 0.001" solref="0.01 1" />
-              <geom name="RR_silicone" type="box" size="0.04 0.03 0.005" pos="0 0 -0.0815" rgba="0.8 0.8 0.2 1" friction="0.9 0.01 0.001" solimp="0.9 0.95 0.001" solref="0.01 1" />
+              <geom name="RR_foam" type="box" size="0.04 0.03 0.012" pos="0 0 -0.0615" rgba="0.3 0.3 0.3 1" friction="0.6 0.01 0.001" solimp="0.9 0.99 0.001" solref="0.02 1" />
+              <geom name="RR_silicone" type="box" size="0.04 0.03 0.005" pos="0 0 -0.0815" rgba="0.8 0.8 0.2 1" friction="0.9 0.01 0.001" solimp="0.9 0.99 0.001" solref="0.02 1" />
             </body>
           </body>
         </body>
@@ -236,8 +237,8 @@
                 <geom name="RL_tpu" type="box" size="0.04 0.03 0.0025" pos="0 0 -0.0225" rgba="0.6 0.6 0.6 1" friction="0.9 0.01 0.001" solimp="0.95 0.99 0.001" solref="0.005 1" />
               </body>
               <geom name="RL_airgap" type="box" size="0.04 0.03 0.0125" pos="0 0 -0.0375" rgba="0.2 0.2 1 0.1" friction="0.1 0.01 0.001" solimp="0.9 0.95 0.001" solref="0.01 1" />
-              <geom name="RL_foam" type="box" size="0.04 0.03 0.012" pos="0 0 -0.0615" rgba="0.3 0.3 0.3 1" friction="0.6 0.01 0.001" solimp="0.9 0.95 0.001" solref="0.01 1" />
-              <geom name="RL_silicone" type="box" size="0.04 0.03 0.005" pos="0 0 -0.0815" rgba="0.8 0.8 0.2 1" friction="0.9 0.01 0.001" solimp="0.9 0.95 0.001" solref="0.01 1" />
+              <geom name="RL_foam" type="box" size="0.04 0.03 0.012" pos="0 0 -0.0615" rgba="0.3 0.3 0.3 1" friction="0.6 0.01 0.001" solimp="0.9 0.99 0.001" solref="0.02 1" />
+              <geom name="RL_silicone" type="box" size="0.04 0.03 0.005" pos="0 0 -0.0815" rgba="0.8 0.8 0.2 1" friction="0.9 0.01 0.001" solimp="0.9 0.99 0.001" solref="0.02 1" />
             </body>          
           </body>
         </body>

@@ -4,7 +4,7 @@ import mujoco
 import mujoco.viewer
 
 from gymnasium import spaces
-from mujoco import MjModel, MjData
+from mujoco import MjModel, MjData, Renderer
 
 
 class QuietDogEnv(gym.Env):
@@ -16,6 +16,11 @@ class QuietDogEnv(gym.Env):
         self.data = MjData(self.model)
         self.sim_steps = 5  # Number of sim steps per env step
         self.render_mode = render_mode
+        self.viewer = None
+
+        self.max_episode_steps = 1000
+        self.current_step = 0
+
 
         self.action_space = spaces.Box(low=-1.0, high=1.0, shape=(12,), dtype=np.float32)
         self.observation_space = spaces.Box(
@@ -53,6 +58,7 @@ class QuietDogEnv(gym.Env):
 
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
+        self.current_step = 0
         if self.model.nkey > 0:
             self.data.qpos[:] = self.model.key_qpos[0]
         else:
@@ -65,15 +71,24 @@ class QuietDogEnv(gym.Env):
         self.data.ctrl[:] = np.clip(action, -1.0, 1.0)
         for _ in range(self.sim_steps):
             mujoco.mj_step(self.model, self.data)
+        self.current_step += 1
         obs = self._get_obs()
         reward = self._compute_reward()
-        #if needed add fall detection
-        done = False  
-        return obs, reward, done, False, {}
+        terminated = False  # Add your own logic here (e.g., fall detection)
+        truncated = self.current_step >= self.max_episode_steps
+        return obs, reward, terminated, truncated, {}
 
     def render(self):
-        if self.viewer:
-            self.viewer.sync()
+        if self.render_mode != "rgb_array":
+            return
+
+        if self.viewer is None:
+            self.viewer = Renderer(self.model)
+
+        self.viewer.update_scene(self.data)
+        img = self.viewer.render()
+        return img
+
 
     def close(self):
         if self.viewer:

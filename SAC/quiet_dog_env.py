@@ -1,0 +1,1 @@
+class QuietDogEnv(gym.Env):

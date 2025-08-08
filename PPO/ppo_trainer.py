@@ -29,8 +29,8 @@ if __name__ == "__main__":
         tensorboard_log="./tb_logs_ppo",
     )
 
-    model.learn(total_timesteps=1_000_000)
+    model.learn(total_timesteps=1_500_000)
 
-    model.save("quiet_dog_ppo_model")
-    venv.save("quiet_dog_vecnormalize.pkl")
+    model.save("quiet_dog_ppo_model_foot_contact2")
+    venv.save("quiet_dog_vecnormalize_foot_contact2.pkl")
     venv.close()

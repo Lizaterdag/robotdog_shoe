@@ -9,7 +9,7 @@ def make_env():
 
 if __name__ == "__main__":
     venv = DummyVecEnv([make_env])
-    # Normalize obs & rewards for more stable PPO training
+    
     venv = VecNormalize(venv, norm_obs=True, norm_reward=True, clip_obs=10.0)
 
     model = PPO(

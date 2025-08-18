@@ -303,6 +303,7 @@ def train_on_robot(env: Go1QuietInterface, cfg: PPOConfig):
 
     ep = 0
     while True:
+        input(f"Checkpoint ep{ep}. Check battery levels and make sure the go1 hangs level with all four legs extended. Press Enter to continue...")
         raw = env.reset()
         prev = raw
         obs = obs_vector(raw)

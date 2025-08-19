@@ -644,19 +644,6 @@ def train_on_robot(env: Go1QuietInterface, cfg: SACConfig, resume: bool = True):
         trainer.save_ckpt("latest")
 
 
-# =========================================================
-# Mic utility to auto-detect supported sample rate
-# =========================================================
-def pick_supported_rate(device_index: int, candidates=(16000, 22050, 32000, 44100, 48000)) -> int:
-    for rate in candidates:
-        try:
-            sd.check_input_settings(device=device_index, samplerate=rate)
-            print(f"[Mic] Using supported sample rate: {rate} Hz")
-            return rate
-        except Exception:
-            continue
-    print("[Mic] Falling back to 48000 Hz (default).")
-    return 48000
 
 
 # =========================================================
@@ -664,8 +651,7 @@ def pick_supported_rate(device_index: int, candidates=(16000, 22050, 32000, 4410
 # =========================================================
 if __name__ == "__main__":
     # NOTE: adjust device_index to your microphone index
-    sample_rate = pick_supported_rate(13)
-    env = Go1QuietInterface(pose_file="real_world/stand_pose.npy", device_index=13, sample_rate=sample_rate)
+    env = Go1QuietInterface(pose_file="real_world/stand_pose.npy", device_index=13)
     env.start_mic()
 
     try:

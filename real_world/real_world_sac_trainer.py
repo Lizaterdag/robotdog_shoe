@@ -350,6 +350,7 @@ class SACTrainer:
         self.rewards = []
         self.db_vals = []
         self.band_vals = []
+        self.steps = []
 
         # Prepare figure (written to file each episode)
         self.fig, self.axs = plt.subplots(3, 1, figsize=(8, 10))
@@ -388,6 +389,7 @@ class SACTrainer:
             "rewards": self.rewards,
             "db": self.db_vals,
             "low_band": self.band_vals,
+            "steps": self.steps,
         }
         with open(os.path.join(self.cfg.ckpt_dir, f"{self.cfg.run_name}_{suffix}_curves.json"), "w") as f:
             json.dump(curves, f)
@@ -429,6 +431,7 @@ class SACTrainer:
                     self.rewards = curves.get("rewards", [])
                     self.db_vals = curves.get("db", [])
                     self.band_vals = curves.get("low_band", [])
+                    self.steps = curves.get("steps", [])
             except Exception:
                 pass
         print(f"[SAC] Loaded checkpoint from {path}")
@@ -536,6 +539,15 @@ class SACTrainer:
         fig.savefig(os.path.join(outdir, "low_band.svg"))
         plt.close(fig)
 
+        # Episode steps
+        fig = plt.figure()
+        plt.plot(self.steps)
+        plt.title("Episode steps")
+        plt.xlabel("Episode")
+        plt.ylabel("Steps")
+        fig.savefig(os.path.join(outdir, "episode_steps.svg"))
+        plt.close(fig)
+
 
 # =========================================================
 # Training Loop
@@ -620,6 +632,8 @@ def train_on_robot(env: Go1QuietInterface, cfg: SACConfig, resume: bool = True):
         trainer.rewards.append(float(ep_return))
         trainer.db_vals.append(float(last_db))
         trainer.band_vals.append(float(last_band))
+        trainer.steps.append(float(step))
+
         print(f"Episode {ep} return={ep_return:.2f} steps={step}, db={last_db:.2f}, low band rms={last_band:.4f}")
 
         # Update plots and save checkpoints

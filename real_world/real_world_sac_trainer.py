@@ -655,8 +655,8 @@ def pick_supported_rate(device_index: int, candidates=(16000, 22050, 32000, 4410
             return rate
         except Exception:
             continue
-    print("[Mic] Falling back to 44100 Hz (default).")
-    return 44100
+    print("[Mic] Falling back to 48000 Hz (default).")
+    return 48000
 
 
 # =========================================================

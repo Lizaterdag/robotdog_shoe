@@ -8,7 +8,7 @@ import time
 
 DEVICE_INDEX = 13            
 CHANNELS = 1                 
-SAMPLE_RATE = 44100          
+SAMPLE_RATE = 48000          
 WAV_FILENAME = "mic_recording.wav"
 
 audio_q = queue.Queue()

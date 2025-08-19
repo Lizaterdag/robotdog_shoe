@@ -399,6 +399,9 @@ class SACTrainer:
         path = os.path.join(self.cfg.ckpt_dir, f"{self.cfg.run_name}_{suffix}.pt")
         if not os.path.isfile(path):
             return False
+        do_load = input("Existing replay buffer found. Do you want to load it? (y/n)")
+        if "n" in do_load:
+            return False
         data = torch.load(path, map_location=self.device)
         self.actor.load_state_dict(data["actor"])
         self.critic.load_state_dict(data["critic"])

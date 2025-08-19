@@ -9,7 +9,7 @@ from quiet_dog_env import QuietDogEnv
 MODEL_PATH = "quiet_dog_ppo_model_foot_contact2.zip"
 VECNORM_PATH = "quiet_dog_vecnormalize_foot_contact2.pkl"  
 VIDEO_DIR = "./eval_videos"
-VIDEO_NAME_PREFIX = "ppo_eval4"
+VIDEO_NAME_PREFIX = "ppo_eval5"
 N_EPS = 5
 VIDEO_LENGTH = 2000      
 RENDER_MODE = "rgb_array"  # rgb_array for video, "human" for live viewer, or None

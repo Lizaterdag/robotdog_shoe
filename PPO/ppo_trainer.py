@@ -31,6 +31,6 @@ if __name__ == "__main__":
 
     model.learn(total_timesteps=1_500_000)
 
-    model.save("quiet_dog_ppo_model_foot_contact2")
-    venv.save("quiet_dog_vecnormalize_foot_contact2.pkl")
+    model.save("quiet_dog_ppo_model_foot_contact3")
+    venv.save("quiet_dog_vecnormalize_foot_contact3.pkl")
     venv.close()

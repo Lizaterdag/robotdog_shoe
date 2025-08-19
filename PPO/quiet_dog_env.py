@@ -46,6 +46,15 @@ class QuietDogEnv(gym.Env):
         self.act_indices_in_model_order = np.array([p[1] for p in pairs], dtype=int)
         self.act_qpos_addr = np.array([p[2] for p in pairs], dtype=int)
 
+        if self.model.nkey > 0:
+            qpos_home = self.model.key_qpos[0].copy()
+        else:
+            qpos_home = np.zeros(self.model.nq, dtype=np.float64)
+        self.nominal_q = qpos_home[self.act_qpos_addr].astype(np.float32)
+
+        # Action scales (absolute offsets around nominal)
+        self.action_scale = np.array([0.35, 0.70, 0.60] * 4, dtype=np.float32)
+
         def _canon_to_model(a):
             out = np.empty_like(a)
             out[self.act_indices_in_model_order] = a
@@ -272,14 +281,15 @@ class QuietDogEnv(gym.Env):
             return obs, 0.0, terminated, truncated, {}
 
         #delta control
-        q_now = self._read_actuated_qpos()
-        q_des = q_now + self.per_joint_delta * action
+        
+        q_des = self.nominal_q + self.action_scale * action
 
-        #clip to contrl ranges
+        # Clamp to canonical ranges
         low_canon = self.ctrl_range[self.act_indices_in_model_order, 0]
         high_canon = self.ctrl_range[self.act_indices_in_model_order, 1]
         q_des = np.clip(q_des, low_canon, high_canon)
 
+        # Apply (convert back to model actuator order)
         self.data.ctrl[:] = self._canon_to_model(q_des)
 
         for _ in range(self.sim_steps):

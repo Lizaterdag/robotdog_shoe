@@ -2,10 +2,12 @@ import numpy as np
 import time, sys, math
 import sounddevice as sd
 import scipy.signal
+from typing import Tuple, Dict, Any
+from real_world.sac_config import SACConfig
 sys.path.append('/home/lilly/robot_shoe/unitree_legged_sdk/lib/python/amd64/')
 import robot_interface as sdk
 
-class Go1QuietInterface:
+class Go1QuietEnv:
     def __init__(self, pose_file, device_index, sample_rate=48000, control_hz=50.0):
         # --- Robot setup ---
         self.pose = np.load(pose_file).astype(float)
@@ -156,6 +158,60 @@ class Go1QuietInterface:
             "mic_feats": mic_feats,
             "fall": False  # replace with tilt check if desired
         }
+
+    def obs_vector(obs: Dict[str, Any]) -> np.ndarray:
+        base_rpy = obs["base_rpy"]
+        r, p, y = base_rpy
+        ori = [math.sin(y), math.cos(y), math.sin(p), math.cos(p), math.sin(r), math.cos(r)]
+        gyro = obs["base_gyro"]
+        acc = obs["base_acc"]
+        q = obs["q"]
+        dq = obs["dq"]
+        contacts = obs["contacts"]
+        mic = obs["mic_feats"]
+        target_v = [obs.get("target_vx", 0.0)]
+        vec = np.concatenate([ori, gyro, acc, q, dq, contacts, mic, target_v]).astype(np.float32)
+        if not np.isfinite(vec).all():
+            vec = np.nan_to_num(vec, nan=0.0, posinf=0.0, neginf=0.0)
+        return vec
+
+
+    def compute_reward(prev: Dict[str, Any], curr: Dict[str, Any], cfg: SACConfig) -> Tuple[float, Dict[str, float]]:
+        db_a = float(curr["mic_feats"][0])
+        low_band = float(curr["mic_feats"][1])
+        r_spl = -cfg.w_spl * db_a
+        r_band = -cfg.w_band * low_band
+        contact_impulse = float(curr.get("contact_impulse", 0.0))
+        r_impact = -cfg.w_foot_impact * contact_impulse
+
+        dq = np.asarray(curr["dq"], dtype=np.float32)
+        r_dq = -cfg.w_joint_vel * float(np.linalg.norm(dq, ord=1))
+
+        tau = np.asarray(curr.get("tau", np.zeros_like(dq)), dtype=np.float32)
+        r_energy = -cfg.w_energy * float(np.sum(np.abs(tau * dq)))
+
+        roll, pitch, _ = curr["base_rpy"]
+        pr = cfg.w_posture * ( - (abs(roll) + abs(pitch)) )
+
+        alive = cfg.w_bonus_upright if not curr.get("fall", False) else -1.0
+
+        vx = float(curr.get("base_vel_x", 0.0))
+        r_track = -0.1 * (vx - cfg.target_speed_mps) ** 2
+
+        total = r_spl + r_band + r_impact + r_dq + r_energy + pr + alive + r_track
+        info = {
+            "r_spl": r_spl,
+            "r_band": r_band,
+            "r_impact": r_impact,
+            "r_dq": r_dq,
+            "r_energy": r_energy,
+            "r_posture": pr,
+            "r_alive": alive,
+            "r_track": r_track,
+            "db_a": db_a,
+            "low_band": low_band,
+        }
+        return float(total), info
 
     def _consume_mic_window(self):
         if self.mic_buf.size >= self.samples_per_step:

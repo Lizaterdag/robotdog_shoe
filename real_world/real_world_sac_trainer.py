@@ -5,14 +5,6 @@ real_world_sac_trainer.py
 Soft Actor-Critic (SAC) training loop tailored for a Unitree Go1 running in
 low-level mode to minimize acoustic noise while maintaining balance and gentle
 locomotion.
-
-Changes from PPO version:
-- Uses off-policy SAC with twin Q-critics and target networks
-- Adds a large replay buffer with save/load to resume after failures
-- Generates/updates live plots after every episode:
-    (1) episode reward
-    (2) dB(A) values
-    (3) low-band RMS values
 """
 from __future__ import annotations
 import os
@@ -33,64 +25,8 @@ import matplotlib
 matplotlib.use("Agg")  # Use non-interactive backend to avoid GUI requirements
 import matplotlib.pyplot as plt
 
-from go1_interface import Go1QuietInterface
-
-# =========================================================
-# Config
-# =========================================================
-@dataclass
-class SACConfig:
-    # Observation / action
-    obs_dim: int
-    act_dim: int
-
-    # Control + episode
-    control_hz: float = 50.0
-    episode_seconds: float = 10.0
-    warmup_seconds: float = 1.0
-    reset_cooldown_s: float = 1.0
-
-    # Reward weights (kept from PPO config for continuity)
-    w_spl: float = 1.0
-    w_band: float = 0.5
-    w_foot_impact: float = 0.1
-    w_joint_vel: float = 0.01
-    w_energy: float = 0.001
-    w_posture: float = 0.2
-    w_bonus_upright: float = 0.5
-    target_speed_mps: float = 0.0
-
-    # SAC hyperparameters
-    gamma: float = 0.995
-    tau: float = 0.005            # target smoothing coefficient
-    lr: float = 3e-4
-    batch_size: int = 256
-    replay_size: int = 1_000_000
-    start_steps: int = 2_000       # steps of random policy for better coverage
-    updates_per_step: int = 1      # gradient updates per environment step
-    policy_update_freq: int = 1    # update policy every N critic updates
-
-    # Entropy temperature (learned)
-    alpha_init: float = 0.2
-    target_entropy_scale: float = 0.5  # multiplies -act_dim (0.5 is conservative)
-
-    # Action bounding
-    max_abs_torque: float = 18.0
-    action_clip: float = 1.0  # env expects actions in [-1, 1]
-
-    # Safety / posture
-    max_joint_vel: float = 10.0
-    base_pitch_roll_limit: float = math.radians(25)
-    base_height_limits: Tuple[float, float] = (0.20, 0.40)
-
-    # Device / seeds / IO
-    device: str = "cpu"
-    seed: int = 42
-    ckpt_dir: str = "checkpoints"
-    run_name: str = "sac_go1_quiet"
-
-    # Plotting
-    plot_file: str = "training_curves.png"  # updated every episode
+from real_world.go1_quiet_env import Go1QuietEnv
+from real_world.sac_config import SACConfig
 
 
 # =========================================================
@@ -250,63 +186,6 @@ class ReplayBuffer:
         self.max_size = int(data["max_size"])
 
 
-# =========================================================
-# Observation / Reward (kept from PPO version)
-# =========================================================
-def obs_vector(obs: Dict[str, Any]) -> np.ndarray:
-    base_rpy = obs["base_rpy"]
-    r, p, y = base_rpy
-    ori = [math.sin(y), math.cos(y), math.sin(p), math.cos(p), math.sin(r), math.cos(r)]
-    gyro = obs["base_gyro"]
-    acc = obs["base_acc"]
-    q = obs["q"]
-    dq = obs["dq"]
-    contacts = obs["contacts"]
-    mic = obs["mic_feats"]
-    target_v = [obs.get("target_vx", 0.0)]
-    vec = np.concatenate([ori, gyro, acc, q, dq, contacts, mic, target_v]).astype(np.float32)
-    if not np.isfinite(vec).all():
-        vec = np.nan_to_num(vec, nan=0.0, posinf=0.0, neginf=0.0)
-    return vec
-
-
-def compute_reward(prev: Dict[str, Any], curr: Dict[str, Any], cfg: SACConfig) -> Tuple[float, Dict[str, float]]:
-    db_a = float(curr["mic_feats"][0])
-    low_band = float(curr["mic_feats"][1])
-    r_spl = -cfg.w_spl * db_a
-    r_band = -cfg.w_band * low_band
-
-    contact_impulse = float(curr.get("contact_impulse", 0.0))
-    r_impact = -cfg.w_foot_impact * contact_impulse
-
-    dq = np.asarray(curr["dq"], dtype=np.float32)
-    r_dq = -cfg.w_joint_vel * float(np.linalg.norm(dq, ord=1))
-
-    tau = np.asarray(curr.get("tau", np.zeros_like(dq)), dtype=np.float32)
-    r_energy = -cfg.w_energy * float(np.sum(np.abs(tau * dq)))
-
-    roll, pitch, _ = curr["base_rpy"]
-    pr = cfg.w_posture * ( - (abs(roll) + abs(pitch)) )
-
-    alive = cfg.w_bonus_upright if not curr.get("fall", False) else -1.0
-
-    vx = float(curr.get("base_vel_x", 0.0))
-    r_track = -0.1 * (vx - cfg.target_speed_mps) ** 2
-
-    total = r_spl + r_band + r_impact + r_dq + r_energy + pr + alive + r_track
-    info = {
-        "r_spl": r_spl,
-        "r_band": r_band,
-        "r_impact": r_impact,
-        "r_dq": r_dq,
-        "r_energy": r_energy,
-        "r_posture": pr,
-        "r_alive": alive,
-        "r_track": r_track,
-        "db_a": db_a,
-        "low_band": low_band,
-    }
-    return float(total), info
 
 
 # =========================================================
@@ -555,7 +434,7 @@ class SACTrainer:
 # =========================================================
 # Training Loop
 # =========================================================
-def train_on_robot(env: Go1QuietInterface, cfg: SACConfig, resume: bool = True):
+def train_on_robot(env: Go1QuietEnv, cfg: SACConfig, resume: bool = True):
     # Seeding
     torch.manual_seed(cfg.seed)
     np.random.seed(cfg.seed)
@@ -578,7 +457,7 @@ def train_on_robot(env: Go1QuietInterface, cfg: SACConfig, resume: bool = True):
             input(f"Checkpoint ep{ep}. Check battery and hang Go1 level with all four legs extended. Press Enter to continue...")
         raw = env.reset()
         prev = raw
-        obs = obs_vector(raw)
+        obs = env.obs_vector(raw)
         t0 = time.time()
         step = 0
         ep_return = 0.0
@@ -600,11 +479,11 @@ def train_on_robot(env: Go1QuietInterface, cfg: SACConfig, resume: bool = True):
             nxt, _, done_flag, _ = env.step(act)
 
             # Reward
-            r, info = compute_reward(prev, nxt, cfg)
+            r, info = env.compute_reward(prev, nxt, cfg)
             last_db, last_band = info["db_a"], info["low_band"]
 
             # Store transition
-            next_obs_vec = obs_vector(nxt)
+            next_obs_vec = env.obs_vector(nxt)
             trainer.replay.add(obs, act, r, next_obs_vec, float(done_flag))
 
             # Accumulate
@@ -651,12 +530,12 @@ def train_on_robot(env: Go1QuietInterface, cfg: SACConfig, resume: bool = True):
 # =========================================================
 if __name__ == "__main__":
     # NOTE: adjust device_index to your microphone index
-    env = Go1QuietInterface(pose_file="real_world/stand_pose.npy", device_index=13)
+    env = Go1QuietEnv(pose_file="real_world/stand_pose.npy", device_index=13)
     env.start_mic()
 
     try:
         first_obs = env.reset()
-        obs_dim = obs_vector(first_obs).shape[0]
+        obs_dim = env.obs_vector(first_obs).shape[0]
         act_dim = 12
 
         cfg = SACConfig(obs_dim=obs_dim, act_dim=act_dim)

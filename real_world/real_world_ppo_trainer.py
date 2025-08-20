@@ -20,7 +20,7 @@ import torch.nn as nn
 import torch.optim as optim
 import sounddevice as sd
 
-from go1_interface import Go1QuietInterface
+from real_world.go1_quiet_env import Go1QuietEnv
 
 # ============================
 # Config
@@ -292,7 +292,7 @@ class PPOTrainer:
 # ============================
 # Training Loop
 # ============================
-def train_on_robot(env: Go1QuietInterface, cfg: PPOConfig):
+def train_on_robot(env: Go1QuietEnv, cfg: PPOConfig):
     device = torch.device(cfg.device)
     trainer = PPOTrainer(cfg)
     buf = RolloutBuffer(cfg.rollout_steps, cfg.obs_dim, cfg.act_dim, device)
@@ -377,7 +377,7 @@ def pick_supported_rate(device_index: int, candidates=(16000, 22050, 32000, 4410
 # ============================
 if __name__ == "__main__":
     sample_rate = pick_supported_rate(13)
-    env = Go1QuietInterface(pose_file="real_world/stand_pose.npy", device_index=13, sample_rate=sample_rate)
+    env = Go1QuietEnv(pose_file="real_world/stand_pose.npy", device_index=13, sample_rate=sample_rate)
     env.start_mic()
     first_obs = env.reset()
     obs_dim = obs_vector(first_obs).shape[0]

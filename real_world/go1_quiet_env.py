@@ -9,6 +9,16 @@ sys.path.append('/home/lilly/robot_shoe/unitree_legged_sdk/lib/python/amd64/')
 import robot_interface as sdk
 
 class Go1QuietEnv:
+    LOWLEVEL = 0xff
+    SCALE = 0.2  # rad max delta
+    TORQUE_SCALE = 0.05  # 30% of max torque
+    MAX_TORQUE = np.array([
+        10.0, 20.0, 20.0,   # front-left leg (roll, pitch, knee)
+        10.0, 20.0, 20.0,   # front-right leg
+        10.0, 20.0, 20.0,   # rear-left leg
+        10.0, 20.0, 20.0    # rear-right leg
+    ], dtype=np.float32)
+
     def __init__(self, pose_file, device_index=10, db_calibration_offset=0, sample_rate=48000, control_hz=50.0):
         # --- Robot setup ---
         self.pose = np.load(pose_file).astype(float)
@@ -21,8 +31,7 @@ class Go1QuietEnv:
         self.samples_per_step = int(sample_rate * self.dt)
         self.optitrack = Optitrack()
 
-        LOWLEVEL = 0xff
-        self.udp  = sdk.UDP(LOWLEVEL, 8080, "192.168.123.10", 8007)
+        self.udp  = sdk.UDP(self.LOWLEVEL, 8080, "192.168.123.10", 8007)
         self.safe = sdk.Safety(sdk.LeggedType.Go1)
         self.cmd   = sdk.LowCmd()
         self.state = sdk.LowState()
@@ -71,7 +80,7 @@ class Go1QuietEnv:
             self.stream.stop()
             self.stream.close()
 
-    def reset(self):
+    def standup(self):
         # Stand up with ramp
         KP0, KD0 = 4.0, 0.3
         KPH, KDH = 12.0, 1.0
@@ -101,27 +110,31 @@ class Go1QuietEnv:
             self.udp.Send()
             time.sleep(self.dt)
 
+    def reset(self):
         # Flush mic buffer so first step starts fresh
         self.mic_buf = np.zeros((0,), dtype=np.float32)
 
         return self._get_obs(-1)
 
     def step(self, action, episode):
-        SCALE = 0.05  # rad max delta
-        KPH, KDH = 12.0, 1.0
-
-        # use the CURRENT joint angles instead of the fixed self.pose
-        current_q = np.array([m.q for m in self.state.motorState[:12]])
-        q_targets = current_q + np.clip(action, -1.0, 1.0) * SCALE
-
+        # First update robot state
         self.udp.Recv()
         self.udp.GetRecv(self.state)
+
+        # Then compute action
+        current_q = np.array([m.q for m in self.state.motorState[:12]])
+        q_targets = current_q + np.clip(action, -1.0, 1.0) * self.SCALE
+
+        # Now send new commands
+        tau_targets = np.clip(action, -1.0, 1.0) * self.MAX_TORQUE * self.TORQUE_SCALE
         for i in range(12):
             m = self.cmd.motorCmd[i]
-            m.q, m.dq, m.Kp, m.Kd, m.tau = q_targets[i], 0.0, KPH, KDH, 0.0
+            m.q, m.dq, m.Kp, m.Kd, m.tau = 0.0, 0.0, 0.0, 0.0, tau_targets[i]
+
         self.safe.PowerProtect(self.cmd, self.state, 1)
         self.udp.SetSend(self.cmd)
         self.udp.Send()
+
 
         time.sleep(self.dt)
         self._step += 1
@@ -162,7 +175,7 @@ class Go1QuietEnv:
 
         mic_feats = np.array([db_a, low_band_rms], dtype=np.float32)
 
-        position = self.optitrack.optiTrackGetPos()
+        position, _ = self.optitrack.optiTrackGetPos()
 
         observations = {
             "base_rpy": (roll, pitch, yaw),
@@ -202,42 +215,69 @@ class Go1QuietEnv:
             vec = np.nan_to_num(vec, nan=0.0, posinf=0.0, neginf=0.0)
         return vec
 
-    def compute_reward(self, prev: Dict[str, Any], curr: Dict[str, Any], cfg: SACConfig) -> Tuple[float, Dict[str, float]]:
+    def compute_reward(self, prev, curr, cfg):
+        # --- sound penalty (weakened) ---
         db_a = float(curr["mic_feats"][0])
-        low_band = float(curr["mic_feats"][1])
-        r_spl = -cfg.w_spl * db_a
-        r_band = -cfg.w_band * low_band
-        contact_impulse = float(curr.get("contact_impulse", 0.0))
-        r_impact = -cfg.w_foot_impact * contact_impulse
+        quiet_threshold = 40.0
+        loud_threshold = 80.0
+        db_norm = np.clip((db_a - quiet_threshold) / (loud_threshold - quiet_threshold), 0, 1)
+        r_spl = -0.1 * cfg.w_spl * db_norm   # much smaller weight
 
-        dq = np.asarray(curr["dq"], dtype=np.float32)
-        r_dq = -cfg.w_joint_vel * float(np.linalg.norm(dq, ord=1))
+        low_band = float(curr["mic_feats"][1])
+        r_band = -0.05 * cfg.w_band * np.clip(low_band / 50.0, 0, 1)
+
+        # --- impacts / energy / smoothness ---
+        contact_impulse = float(curr.get("contact_impulse", 0.0))
+        r_impact = -0.05 * cfg.w_foot_impact * np.tanh(contact_impulse)
+
+        dq = np.asarray(curr["dq"][:12], dtype=np.float32)
+        r_dq = -0.001 * cfg.w_joint_vel * np.mean(np.abs(dq))
 
         tau = np.asarray(curr.get("tau", np.zeros_like(dq)), dtype=np.float32)
-        r_energy = -cfg.w_energy * float(np.sum(np.abs(tau * dq)))
+        r_energy = -0.0005 * cfg.w_energy * float(np.mean(np.abs(tau * dq)))
 
+        # --- posture & alive ---
         roll, pitch, _ = curr["base_rpy"]
-        pr = cfg.w_posture * ( - (abs(roll) + abs(pitch)) )
+        pr = -0.05 * cfg.w_posture * (abs(roll) + abs(pitch))
 
-        alive = cfg.w_bonus_upright if not curr.get("fall", False) else -1.0
+        alive = cfg.w_bonus_upright if not curr.get("fall", False) else -5.0
 
+        # --- forward motion incentives ---
         vx = float(curr.get("base_vel_x", 0.0))
-        r_track = -0.1 * (vx - cfg.target_speed_mps) ** 2
+        r_track = cfg.w_movement * vx
 
-        total = r_spl + r_band + r_impact + r_dq + r_energy + pr + alive + r_track
-        info = {
-            "r_spl": r_spl,
-            "r_band": r_band,
-            "r_impact": r_impact,
-            "r_dq": r_dq,
-            "r_energy": r_energy,
-            "r_posture": pr,
-            "r_alive": alive,
-            "r_track": r_track,
-            "db_a": db_a,
-            "low_band": low_band,
-        }
+        dx = abs(curr['position'][0] - prev['position'][0])
+        dy = abs(curr['position'][1] - prev['position'][1])
+        r_move = cfg.w_movement * (dx + dy)
+
+
+        total = r_spl + r_band + r_impact + r_dq + r_energy + pr + alive + r_track + r_move
+        info = dict(
+            r_spl=r_spl, r_band=r_band, r_impact=r_impact,
+            r_dq=r_dq, r_energy=r_energy, r_posture=pr,
+            r_alive=alive, r_track=r_track, r_move=r_move,
+            db_a=db_a, low_band=low_band, vx=vx
+        )
         return float(total), info
+
+    # test reward for movement only
+    # def compute_reward(self, prev, curr, cfg):
+    #     vx = float(curr.get("base_vel_x", 0.0))
+    #     dx = abs(curr['position'][0] - prev['position'][0])
+
+    #     r_move = 5.0 * dx + 2.0 * vx     # strong forward incentive
+    #     alive = 0.1 if not curr.get("fall", False) else -5.0
+    #     pr = -0.05 * (abs(curr["base_rpy"][0]) + abs(curr["base_rpy"][1]))
+
+    #     total = r_move + alive + pr
+    #     info = dict(
+    #         r_spl=0, r_band=0, r_impact=0,
+    #         r_dq=0, r_energy=0, r_posture=pr,
+    #         r_alive=alive, r_track=0, r_move=r_move,
+    #         db_a=0, low_band=0, vx=vx
+    #     )
+    #     return total, info
+
     
     def save_observations(self, run_name, dir):
         pos = {k: np.array(v).tolist() for k,v in self.positions.items()}

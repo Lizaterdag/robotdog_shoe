@@ -20,7 +20,7 @@ class SACConfig:
 
     # Sound
     db_calibration_offset: float = 120
-    device_index: int = 10
+    device_index: int = 11
 
     # Reward weights
     w_spl: float = 1.0
@@ -29,8 +29,9 @@ class SACConfig:
     w_joint_vel: float = 0.01
     w_energy: float = 0.001
     w_posture: float = 0.2
-    w_bonus_upright: float = 0.5
+    w_bonus_upright: float = 0.05
     target_speed_mps: float = 0.0
+    w_movement: float = 20.0
 
     # SAC hyperparameters
     gamma: float = 0.995
@@ -43,7 +44,7 @@ class SACConfig:
     policy_update_freq: int = 1    # update policy every N critic updates
 
     # Entropy temperature (learned)
-    alpha_init: float = 0.2
+    alpha_init: float = 0.8
     target_entropy_scale: float = 0.5  # multiplies -act_dim (0.5 is conservative)
 
     # Action bounding

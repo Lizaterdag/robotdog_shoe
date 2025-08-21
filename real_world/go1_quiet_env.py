@@ -155,24 +155,7 @@ class Go1QuietEnv:
         contacts = np.array([fs for fs in self.state.footForce], dtype=np.float32) > 5.0
 
         # Mic features over last control window
-        mic_samples = self._consume_mic_window()
-        if mic_samples.size == 0:
-            rms = 0.0
-            db_a = -np.inf
-            low_band_rms = 0.0
-        else:
-            # overall RMS -> dB
-            rms = np.sqrt(np.mean(mic_samples**2))
-            db = 20*np.log10(rms+1e-12) + self.db_calibration_offset
-            # A-weighting filter
-            b, a = self.design_a_weighting(self.sample_rate)
-            weighted = scipy.signal.lfilter(b, a, mic_samples)
-            rms_a = np.sqrt(np.mean(weighted**2))
-            db_a = 20*np.log10(rms_a+1e-12) + self.db_calibration_offset
-            # low-frequency band RMS
-            low = scipy.signal.lfilter(self.low_band_b, self.low_band_a, mic_samples)
-            low_band_rms = np.sqrt(np.mean(low**2))
-
+        db_a, low_band_rms = self.compute_db_and_rms()
         mic_feats = np.array([db_a, low_band_rms], dtype=np.float32)
 
         position, _ = self.optitrack.optiTrackGetPos()
@@ -305,6 +288,27 @@ class Go1QuietEnv:
 
         with open(os.path.join(dir, f"{run_name}_obs.json"), "w") as f:
             json.dump(obs, f)
+
+    def compute_db_and_rms(self):
+        mic_samples = self._consume_mic_window()
+        if mic_samples.size == 0:
+            rms = 0.0
+            db_a = -np.inf
+            low_band_rms = 0.0
+        else:
+            # overall RMS -> dB
+            rms = np.sqrt(np.mean(mic_samples**2))
+            db = 20*np.log10(rms+1e-12) + self.db_calibration_offset
+            # A-weighting filter
+            b, a = self.design_a_weighting(self.sample_rate)
+            weighted = scipy.signal.lfilter(b, a, mic_samples)
+            rms_a = np.sqrt(np.mean(weighted**2))
+            db_a = 20*np.log10(rms_a+1e-12) + self.db_calibration_offset
+            # low-frequency band RMS
+            low = scipy.signal.lfilter(self.low_band_b, self.low_band_a, mic_samples)
+            low_band_rms = np.sqrt(np.mean(low**2))
+
+        return db_a, low_band_rms
 
 
     def _consume_mic_window(self):

@@ -14,7 +14,7 @@ class SACConfig:
     # Control + episode
     control_hz: float = 50.0
     episodes: int = 50
-    episode_seconds: float = 180.0
+    episode_seconds: float = 120.0
     warmup_seconds: float = 1.0
     reset_cooldown_s: float = 1.0
 

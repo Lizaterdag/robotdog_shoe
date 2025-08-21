@@ -457,7 +457,7 @@ def train_on_robot(env: Go1QuietEnv, cfg: SACConfig, resume: bool = True):
     last_db, last_band = 0.0, 0.0
 
     for ep in range(1, cfg.episodes):
-        input(f"Checkpoint ep{ep}. Check battery and hang Go1 level with all four legs extended. Press Enter to continue...")
+        input(f"Checkpoint ep{ep}. Check battery and hang Go1 at 30cm + shoe height level with all four legs extended. Mic test: {env.compute_db_and_rms()}. Press Enter to continue...")
         raw = env.reset()
         prev = raw
         obs = env.obs_vector(raw)

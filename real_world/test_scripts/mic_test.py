@@ -6,13 +6,18 @@ import wave
 import queue
 import time    
 
-DEVICE_INDEX = 10            
+DEVICE_INDEX = 11            
 CHANNELS = 1                 
 SAMPLE_RATE = 48000 
 DB_CALIBRATION_OFFSET = 135        
 WAV_FILENAME = "mic_recording.wav"
 
 audio_q = queue.Queue()
+
+def find_device_index():
+    # look for HD-Audio Generic: ALC897 Analog (hw:3,0), ALSA (2 in, 2 out)
+    print(sd.query_devices())
+
 
 def record_mic():
     def callback(indata, frames, time_info, status):

@@ -32,6 +32,7 @@ class SACConfig:
     w_bonus_upright: float = 0.05
     target_speed_mps: float = 0.0
     w_movement: float = 20.0
+    w_contact: float = 0.3
 
     # SAC hyperparameters
     gamma: float = 0.995

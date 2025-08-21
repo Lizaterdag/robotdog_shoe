@@ -233,12 +233,14 @@ class Go1QuietEnv:
         dy = abs(curr['position'][1] - prev['position'][1])
         r_move = cfg.w_movement * (dx + dy)
 
+        r_contact = cfg.w_contact * float(curr["contacts"].sum())
 
-        total = r_spl + r_band + r_impact + r_dq + r_energy + pr + alive + r_track + r_move
+        total = r_spl + r_band + r_impact + r_dq + r_energy + pr + alive + r_track + r_move + r_contact
         info = dict(
             r_spl=r_spl, r_band=r_band, r_impact=r_impact,
             r_dq=r_dq, r_energy=r_energy, r_posture=pr,
             r_alive=alive, r_track=r_track, r_move=r_move,
+            r_contact=r_contact,
             db_a=db_a, low_band=low_band, vx=vx
         )
         return float(total), info

@@ -9,13 +9,14 @@ sys.path.append('/home/lilly/robot_shoe/unitree_legged_sdk/lib/python/amd64/')
 import robot_interface as sdk
 
 class Go1QuietEnv:
-    def __init__(self, pose_file, device_index, sample_rate=48000, control_hz=50.0):
+    def __init__(self, pose_file, device_index=10, db_calibration_offset=0, sample_rate=48000, control_hz=50.0):
         # --- Robot setup ---
         self.pose = np.load(pose_file).astype(float)
         assert self.pose.size == 12, "pose file must contain 12 joint angles"
         self.dt = 1.0 / control_hz
         self._step = 0
         self.device_index = device_index
+        self.db_calibration_offset = db_calibration_offset
         self.sample_rate = sample_rate
         self.samples_per_step = int(sample_rate * self.dt)
         self.optitrack = Optitrack()
@@ -146,12 +147,12 @@ class Go1QuietEnv:
         else:
             # overall RMS -> dB
             rms = np.sqrt(np.mean(mic_samples**2))
-            db = 20*np.log10(rms+1e-12)
+            db = 20*np.log10(rms+1e-12) + self.db_calibration_offset
             # A-weighting filter
             b, a = self.design_a_weighting(self.sample_rate)
             weighted = scipy.signal.lfilter(b, a, mic_samples)
             rms_a = np.sqrt(np.mean(weighted**2))
-            db_a = 20*np.log10(rms_a+1e-12)
+            db_a = 20*np.log10(rms_a+1e-12) + self.db_calibration_offset
             # low-frequency band RMS
             low = scipy.signal.lfilter(self.low_band_b, self.low_band_a, mic_samples)
             low_band_rms = np.sqrt(np.mean(low**2))

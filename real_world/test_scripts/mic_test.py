@@ -8,7 +8,8 @@ import time
 
 DEVICE_INDEX = 10            
 CHANNELS = 1                 
-SAMPLE_RATE = 48000          
+SAMPLE_RATE = 48000 
+DB_CALIBRATION_OFFSET = 135        
 WAV_FILENAME = "mic_recording.wav"
 
 audio_q = queue.Queue()
@@ -78,7 +79,7 @@ if __name__ == "__main__":
     try:
         while True:
             time.sleep(1)
-            print(f"dB Level: {db_measurements[-1]:.2f} dB")
+            print(f"dB Level: {db_measurements[-1]+DB_CALIBRATION_OFFSET:.2f} dB")
 
     except KeyboardInterrupt:
         audio_q.put(None)

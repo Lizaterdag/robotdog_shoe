@@ -18,6 +18,10 @@ class SACConfig:
     warmup_seconds: float = 1.0
     reset_cooldown_s: float = 1.0
 
+    # Sound
+    db_calibration_offset: float = 120
+    device_index: int = 10
+
     # Reward weights
     w_spl: float = 1.0
     w_band: float = 0.5

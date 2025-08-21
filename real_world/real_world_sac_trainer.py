@@ -530,8 +530,8 @@ def train_on_robot(env: Go1QuietEnv, cfg: SACConfig, resume: bool = True):
 # =========================================================
 if __name__ == "__main__":
     # NOTE: adjust device_index to your microphone index
-    env = Go1QuietEnv(pose_file="real_world/stand_pose.npy", device_index=13)
-    env.start_mic()
+    env = Go1QuietEnv(pose_file="real_world/stand_pose.npy")
+    
 
     try:
         first_obs = env.reset()
@@ -539,6 +539,11 @@ if __name__ == "__main__":
         act_dim = 12
 
         cfg = SACConfig(obs_dim=obs_dim, act_dim=act_dim)
+
+        env.device_index = cfg.device_index
+        env.db_calibration_offset = cfg.db_calibration_offset
+
+        env.start_mic()
 
         # Save an initial copy of config
         os.makedirs(cfg.ckpt_dir, exist_ok=True)

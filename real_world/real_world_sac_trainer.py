@@ -245,7 +245,7 @@ class SACTrainer:
         return self.log_alpha.exp()
 
     # ---------------------------
-    def save_ckpt(self, suffix="latest"):
+    def save_ckpt(self, suffix="latest", last_episode=None):
         path = os.path.join(self.cfg.ckpt_dir, f"{self.cfg.run_name}_{suffix}.pt")
         torch.save({
             "actor": self.actor.state_dict(),
@@ -262,12 +262,14 @@ class SACTrainer:
             },
             "total_env_steps": self.total_env_steps,
             "updates": self.updates,
+            "last_episode": last_episode if last_episode is not None else len(self.rewards),
             "cfg": asdict(self.cfg),
         }, path)
+
         # Save replay buffer
         self.replay.save(os.path.join(self.cfg.ckpt_dir, f"{self.cfg.run_name}_{suffix}_replay.npz"))
 
-        # Save curves as JSON for quick glance
+        # Save curves
         curves = {
             "rewards": self.rewards,
             "db": self.db_vals,
@@ -277,14 +279,17 @@ class SACTrainer:
         with open(os.path.join(self.cfg.ckpt_dir, f"{self.cfg.run_name}_{suffix}_curves.json"), "w") as f:
             json.dump(curves, f)
 
+
     # ---------------------------
     def load_ckpt_if_exists(self, suffix="latest"):
         path = os.path.join(self.cfg.ckpt_dir, f"{self.cfg.run_name}_{suffix}.pt")
         if not os.path.isfile(path):
-            return False
-        do_load = input("Existing replay buffer found. Do you want to load it? (y/n)")
-        if "n" in do_load:
-            return False
+            return 0  # start from episode 0
+
+        do_load = input("Existing checkpoint found. Load it? (y/n): ")
+        if "n" in do_load.lower():
+            return 0
+
         data = torch.load(path, map_location=self.device)
         self.actor.load_state_dict(data["actor"])
         self.critic.load_state_dict(data["critic"])
@@ -303,12 +308,12 @@ class SACTrainer:
         self.total_env_steps = int(data.get("total_env_steps", 0))
         self.updates = int(data.get("updates", 0))
 
-        # Load replay
+        # Load replay buffer
         rpath = os.path.join(self.cfg.ckpt_dir, f"{self.cfg.run_name}_{suffix}_replay.npz")
         if os.path.isfile(rpath):
             self.replay.load(rpath)
 
-        # Curves are optional
+        # Load curves
         cpath = os.path.join(self.cfg.ckpt_dir, f"{self.cfg.run_name}_{suffix}_curves.json")
         if os.path.isfile(cpath):
             try:
@@ -320,8 +325,11 @@ class SACTrainer:
                     self.steps = curves.get("steps", [])
             except Exception:
                 pass
-        print(f"[SAC] Loaded checkpoint from {path}")
-        return True
+
+        last_episode = int(data.get("last_episode", 0))
+        print(f"[SAC] Loaded checkpoint from {path}, resuming at episode {last_episode + 1}")
+        return last_episode + 1  # next episode to run
+
 
     # ---------------------------
     def soft_update_targets(self):
@@ -439,24 +447,24 @@ class SACTrainer:
 # Training Loop
 # =========================================================
 def train_on_robot(env: Go1QuietEnv, cfg: SACConfig, resume: bool = True):
-    # Seeding
     torch.manual_seed(cfg.seed)
     np.random.seed(cfg.seed)
     random.seed(cfg.seed)
 
     device = torch.device(cfg.device)
     trainer = SACTrainer(cfg)
+
+    start_ep = 1
     if resume:
-        trainer.load_ckpt_if_exists("latest")
+        start_ep = trainer.load_ckpt_if_exists("latest")
 
     steps_per_ep = int(cfg.episode_seconds * cfg.control_hz)
     warmup_steps = int(cfg.warmup_seconds * cfg.control_hz)
     dt = 1.0 / cfg.control_hz
 
-    ep = 0
     last_db, last_band = 0.0, 0.0
 
-    for ep in range(1, cfg.episodes):
+    for ep in range(start_ep, cfg.episodes + 1):
         input(f"Checkpoint ep{ep}. Check battery and hang Go1 at 30cm + shoe height level with all four legs extended. Mic test: {env.compute_db_and_rms()}. Press Enter to continue...")
         raw = env.reset()
         prev = raw
@@ -471,32 +479,27 @@ def train_on_robot(env: Go1QuietEnv, cfg: SACConfig, resume: bool = True):
             if step < warmup_steps:
                 trainer.obs_norm.update(obs_t.unsqueeze(0))
 
-            # Action selection (initial random steps)
+            # Action selection
             if trainer.total_env_steps < cfg.start_steps:
-                act = np.random.uniform(low=-cfg.action_clip, high=cfg.action_clip, size=cfg.act_dim).astype(np.float32)
+                act = np.random.uniform(-cfg.action_clip, cfg.action_clip, size=cfg.act_dim).astype(np.float32)
             else:
                 act = trainer.select_action(obs, stochastic=True)
             act = np.clip(act, -cfg.action_clip, cfg.action_clip)
 
             # Step env
             nxt, _, done_flag, _ = env.step(act, ep)
-
-            # Reward
             r, info = env.compute_reward(prev, nxt, cfg)
             last_db, last_band = info["db_a"], info["low_band"]
 
-            # Store transition
             next_obs_vec = env.obs_vector(nxt)
             trainer.replay.add(obs, act, r, next_obs_vec, float(done_flag))
 
-            # Accumulate
             ep_return += r
             step += 1
             trainer.total_env_steps += 1
             prev = nxt
             obs = next_obs_vec
 
-            # SAC updates (if enough data)
             if trainer.replay.size >= cfg.batch_size:
                 for _ in range(cfg.updates_per_step):
                     batch = trainer.replay.sample(cfg.batch_size)
@@ -507,12 +510,11 @@ def train_on_robot(env: Go1QuietEnv, cfg: SACConfig, resume: bool = True):
 
             # Real-time pacing
             elapsed = time.time() - t0
-            target = step * dt
-            sleep = target - elapsed
+            sleep = step * dt - elapsed
             if sleep > 0:
                 time.sleep(sleep)
 
-        # Episode end bookkeeping
+        # Episode bookkeeping
         trainer.rewards.append(float(ep_return))
         trainer.db_vals.append(float(last_db))
         trainer.band_vals.append(float(last_band))
@@ -522,7 +524,8 @@ def train_on_robot(env: Go1QuietEnv, cfg: SACConfig, resume: bool = True):
 
         # Update plots and save checkpoints
         trainer.update_plots()
-        trainer.save_ckpt("latest")
+        trainer.save_ckpt("latest", last_episode=ep)
+
 
 
 # =========================================================

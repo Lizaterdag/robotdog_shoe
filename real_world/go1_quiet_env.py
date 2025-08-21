@@ -1,9 +1,10 @@
 import numpy as np
-import time, sys, math
+import time, sys, math, json, os
 import sounddevice as sd
 import scipy.signal
 from typing import Tuple, Dict, Any
-from real_world.sac_config import SACConfig
+from sac_config import SACConfig
+from optitrack import Optitrack
 sys.path.append('/home/lilly/robot_shoe/unitree_legged_sdk/lib/python/amd64/')
 import robot_interface as sdk
 
@@ -13,9 +14,11 @@ class Go1QuietEnv:
         self.pose = np.load(pose_file).astype(float)
         assert self.pose.size == 12, "pose file must contain 12 joint angles"
         self.dt = 1.0 / control_hz
+        self._step = 0
         self.device_index = device_index
         self.sample_rate = sample_rate
         self.samples_per_step = int(sample_rate * self.dt)
+        self.optitrack = Optitrack()
 
         LOWLEVEL = 0xff
         self.udp  = sdk.UDP(LOWLEVEL, 8080, "192.168.123.10", 8007)
@@ -31,6 +34,12 @@ class Go1QuietEnv:
         # Design low-pass for footstep band
         self.low_band_b, self.low_band_a = scipy.signal.butter(
             4, [50/(sample_rate/2), 200/(sample_rate/2)], btype='band')
+        
+        # data storage
+        self.positions = {}
+        self.db_vals = {}
+        self.rms_vals = {}
+        self.observations = {}
 
 
     def design_a_weighting(self, fs: int):
@@ -94,9 +103,9 @@ class Go1QuietEnv:
         # Flush mic buffer so first step starts fresh
         self.mic_buf = np.zeros((0,), dtype=np.float32)
 
-        return self._get_obs()
+        return self._get_obs(-1)
 
-    def step(self, action):
+    def step(self, action, episode):
         # Apply PD target as pose + scaled delta
         SCALE = 0.05  # rad max delta
         KPH, KDH = 12.0, 1.0
@@ -111,12 +120,13 @@ class Go1QuietEnv:
         self.udp.Send()
 
         time.sleep(self.dt)
+        self._step += 1
 
-        obs = self._get_obs()
+        obs = self._get_obs(episode)
         done = self._check_safety(obs)
         return obs, 0.0, done, {}  # reward handled externally
 
-    def _get_obs(self):
+    def _get_obs(self, episode):
         # Basic proprio
         roll = self.state.imu.rpy[0]
         pitch = self.state.imu.rpy[1]
@@ -148,7 +158,9 @@ class Go1QuietEnv:
 
         mic_feats = np.array([db_a, low_band_rms], dtype=np.float32)
 
-        return {
+        position = self.optitrack.optiTrackGetPos()
+
+        observations = {
             "base_rpy": (roll, pitch, yaw),
             "base_gyro": gyro,
             "base_acc": acc,
@@ -156,10 +168,21 @@ class Go1QuietEnv:
             "dq": dq,
             "contacts": contacts.astype(np.float32),
             "mic_feats": mic_feats,
+            "position": position,
             "fall": False  # replace with tilt check if desired
         }
 
-    def obs_vector(obs: Dict[str, Any]) -> np.ndarray:
+        self._append_or_add(self.positions, episode, position)
+        self._append_or_add(self.db_vals, episode, db_a)
+        self._append_or_add(self.rms_vals, episode, low_band_rms)
+        if episode in self.observations.keys():
+            self.observations[episode][self._step] = observations
+        else:
+            self.observations[episode] = {self._step: observations}
+
+        return observations
+
+    def obs_vector(self, obs: Dict[str, Any]) -> np.ndarray:
         base_rpy = obs["base_rpy"]
         r, p, y = base_rpy
         ori = [math.sin(y), math.cos(y), math.sin(p), math.cos(p), math.sin(r), math.cos(r)]
@@ -175,8 +198,7 @@ class Go1QuietEnv:
             vec = np.nan_to_num(vec, nan=0.0, posinf=0.0, neginf=0.0)
         return vec
 
-
-    def compute_reward(prev: Dict[str, Any], curr: Dict[str, Any], cfg: SACConfig) -> Tuple[float, Dict[str, float]]:
+    def compute_reward(self, prev: Dict[str, Any], curr: Dict[str, Any], cfg: SACConfig) -> Tuple[float, Dict[str, float]]:
         db_a = float(curr["mic_feats"][0])
         low_band = float(curr["mic_feats"][1])
         r_spl = -cfg.w_spl * db_a
@@ -212,6 +234,34 @@ class Go1QuietEnv:
             "low_band": low_band,
         }
         return float(total), info
+    
+    def save_observations(self, run_name, dir):
+        pos = {k: np.array(v).tolist() for k,v in self.positions.items()}
+        pos_path = os.path.join(dir, f"{run_name}_positions.json")
+        with open(pos_path, "w") as f:
+            json.dump(pos, f)
+
+        dbs = {k: np.array(v).tolist() for k,v in self.db_vals.items()}
+        db_path = os.path.join(dir, f"{run_name}_db.json")
+        with open(db_path, "w") as f:
+            json.dump(dbs, f)
+
+        rms = {k: np.array(v).tolist() for k,v in self.rms_vals.items()}
+        rms_path = os.path.join(dir, f"{run_name}_rms.json")
+        with open(rms_path, "w") as f:
+            json.dump(rms, f)
+
+        obs = {}
+        for ep, epdata in self.observations.items():
+            for key,val in epdata.items():
+                data = {}
+                for k,v in val.items():
+                    data[k] = np.array(v).tolist()
+                obs[key] = data
+
+        with open(os.path.join(dir, f"{run_name}_obs.json"), "w") as f:
+            json.dump(obs, f)
+
 
     def _consume_mic_window(self):
         if self.mic_buf.size >= self.samples_per_step:
@@ -227,3 +277,10 @@ class Go1QuietEnv:
         if abs(roll) > np.radians(25) or abs(pitch) > np.radians(25):
             return True
         return False
+
+
+    def _append_or_add(self, dict, key, val):
+        if key in dict:
+            dict[key].append(val)
+        else:
+            dict[key] = [val]

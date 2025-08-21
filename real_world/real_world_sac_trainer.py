@@ -25,9 +25,13 @@ import matplotlib
 matplotlib.use("Agg")  # Use non-interactive backend to avoid GUI requirements
 import matplotlib.pyplot as plt
 
-from real_world.go1_quiet_env import Go1QuietEnv
-from real_world.sac_config import SACConfig
+from go1_quiet_env import Go1QuietEnv
+from sac_config import SACConfig
 
+import logging
+
+# Silence matplotlib's debug spam
+logging.getLogger('matplotlib').setLevel(logging.WARNING)
 
 # =========================================================
 # Running Normalization
@@ -476,7 +480,7 @@ def train_on_robot(env: Go1QuietEnv, cfg: SACConfig, resume: bool = True):
             act = np.clip(act, -cfg.action_clip, cfg.action_clip)
 
             # Step env
-            nxt, _, done_flag, _ = env.step(act)
+            nxt, _, done_flag, _ = env.step(act, ep)
 
             # Reward
             r, info = env.compute_reward(prev, nxt, cfg)
@@ -521,9 +525,8 @@ def train_on_robot(env: Go1QuietEnv, cfg: SACConfig, resume: bool = True):
         # Update plots and save checkpoints
         trainer.update_plots()
         trainer.save_ckpt("latest")
-
-
-
+        if ep == 2:
+            return False
 
 # =========================================================
 # Main
@@ -546,5 +549,6 @@ if __name__ == "__main__":
             json.dump(asdict(cfg), f, indent=2)
 
         train_on_robot(env, cfg, resume=True)
+        env.save_observations(cfg.run_name, cfg.ckpt_dir)
     finally:
         env.stop_mic()

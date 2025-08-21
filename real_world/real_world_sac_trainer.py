@@ -456,9 +456,8 @@ def train_on_robot(env: Go1QuietEnv, cfg: SACConfig, resume: bool = True):
     ep = 0
     last_db, last_band = 0.0, 0.0
 
-    while True:
-        if ep != 0:
-            input(f"Checkpoint ep{ep}. Check battery and hang Go1 level with all four legs extended. Press Enter to continue...")
+    for ep in range(1, cfg.episodes):
+        input(f"Checkpoint ep{ep}. Check battery and hang Go1 level with all four legs extended. Press Enter to continue...")
         raw = env.reset()
         prev = raw
         obs = env.obs_vector(raw)
@@ -514,7 +513,6 @@ def train_on_robot(env: Go1QuietEnv, cfg: SACConfig, resume: bool = True):
                 time.sleep(sleep)
 
         # Episode end bookkeeping
-        ep += 1
         trainer.rewards.append(float(ep_return))
         trainer.db_vals.append(float(last_db))
         trainer.band_vals.append(float(last_band))
@@ -525,8 +523,7 @@ def train_on_robot(env: Go1QuietEnv, cfg: SACConfig, resume: bool = True):
         # Update plots and save checkpoints
         trainer.update_plots()
         trainer.save_ckpt("latest")
-        if ep == 2:
-            return False
+
 
 # =========================================================
 # Main

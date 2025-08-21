@@ -107,10 +107,13 @@ class Go1QuietEnv:
         return self._get_obs(-1)
 
     def step(self, action, episode):
-        # Apply PD target as pose + scaled delta
         SCALE = 0.05  # rad max delta
         KPH, KDH = 12.0, 1.0
-        q_targets = self.pose + np.clip(action, -1.0, 1.0) * SCALE
+
+        # use the CURRENT joint angles instead of the fixed self.pose
+        current_q = np.array([m.q for m in self.state.motorState[:12]])
+        q_targets = current_q + np.clip(action, -1.0, 1.0) * SCALE
+
         self.udp.Recv()
         self.udp.GetRecv(self.state)
         for i in range(12):
@@ -134,8 +137,8 @@ class Go1QuietEnv:
         yaw = self.state.imu.rpy[2]
         gyro = np.array(self.state.imu.gyroscope)
         acc = np.array(self.state.imu.accelerometer)
-        q = np.array([m.q for m in self.state.motorState])
-        dq = np.array([m.dq for m in self.state.motorState])
+        q  = np.array([m.q  for m in self.state.motorState[:12]])
+        dq = np.array([m.dq for m in self.state.motorState[:12]])
         contacts = np.array([fs for fs in self.state.footForce], dtype=np.float32) > 5.0
 
         # Mic features over last control window

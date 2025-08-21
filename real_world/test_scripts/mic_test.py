@@ -4,25 +4,15 @@ import sounddevice as sd
 import numpy as np
 import wave
 import queue
-import time
+import time    
 
-import standing 
-
-GO1_IP = '192.168.123.161'   
-GO1_PORT = 8000              
-
-DEVICE_INDEX = 13            
+DEVICE_INDEX = 10            
 CHANNELS = 1                 
 SAMPLE_RATE = 48000          
 WAV_FILENAME = "mic_recording.wav"
 
 audio_q = queue.Queue()
 
-# --- Thread 1: Connect to the Go1 robot ---
-def connect_go1():
-    standing.execute_go1_movement_routine()
-
-# --- Thread 2: Record audio, compute dB, save to file ---
 def record_mic():
     def callback(indata, frames, time_info, status):
         if status:
@@ -39,7 +29,7 @@ def record_mic():
         else:
             db = -np.inf
         db_measurements.append(db)
-        print(f"[Mic] dB Level: {db:.2f} dB")
+        #print(f"[Mic] dB Level: {db:.2f} dB")
 
     print(f"[Mic] Starting recording from device {DEVICE_INDEX}...")
     with sd.InputStream(device=DEVICE_INDEX,
@@ -71,14 +61,17 @@ def save_audio():
 # ------------------------------
 # START THREADS
 # ------------------------------
+
+"""
+Test by remaining quiet for 5s. Db levels should be around -50 or -60.
+Then test by making medium noise for 5s. Db levels should be around -40
+"""
 if __name__ == "__main__":
     db_measurements = []
 
-    go1_thread = threading.Thread(target=connect_go1, daemon=True)
     mic_thread = threading.Thread(target=record_mic, daemon=True)
     audio_recording_thread = threading.Thread(target=save_audio, daemon=True)
     
-    go1_thread.start()
     mic_thread.start()
     audio_recording_thread.start()
 
@@ -90,3 +83,4 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         audio_q.put(None)
         print("\n[Main] Exiting.")
+

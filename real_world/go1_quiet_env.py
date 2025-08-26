@@ -16,6 +16,14 @@ class Go1QuietEnv:
     DT_MAX = 1.0 / 20.0
 
     TORQUE_SCALE = 0.1  # fraction of MAX_TORQUE
+
+    ACTION_SCALE = np.array([
+        0.35, 0.70, 0.60,   # FL: abd, hip, knee
+        0.35, 0.70, 0.60,   # FR
+        0.35, 0.70, 0.60,   # RL
+        0.35, 0.70, 0.60    # RR
+    ], dtype=np.float32)
+
     MAX_TORQUE = np.array([
         10.0, 20.0, 20.0,  # front-left leg
         10.0, 20.0, 20.0,  # front-right leg
@@ -187,35 +195,35 @@ class Go1QuietEnv:
         # return self._get_obs(-1)
 
         def reset(self):
-        self.mic_buf = np.zeros((0,), dtype=np.float32)
-        self._step = 0
-        self.mode = "GROUND"
-        self.contact_streak = 0
-        self.airborne_steps = 0
-        self.prev_contacts[:] = False
-        self.prev_position = None
-        self.prev_time = None
-        self.prev_action[:] = 0.0
+            self.mic_buf = np.zeros((0,), dtype=np.float32)
+            self._step = 0
+            self.mode = "GROUND"
+            self.contact_streak = 0
+            self.airborne_steps = 0
+            self.prev_contacts[:] = False
+            self.prev_position = None
+            self.prev_time = None
+            self.prev_action[:] = 0.0
 
-        # Read state
-        self.udp.Recv()
-        self.udp.GetRecv(self.state)
+            # Read state
+            self.udp.Recv()
+            self.udp.GetRecv(self.state)
 
-        # Immediately command nominal stand
-        for i in range(12):
-            m = self.cmd.motorCmd[i]
-            m.q = float(self.nominal_q[i])
-            m.dq = 0.0
-            m.Kp = self.KP_STAND
-            m.Kd = self.KD_STAND
-            m.tau = 0.0
-        self.safe.PowerProtect(self.cmd, self.state, 1)
-        self.udp.SetSend(self.cmd)
-        self.udp.Send()
+            # Immediately command nominal stand
+            for i in range(12):
+                m = self.cmd.motorCmd[i]
+                m.q = float(self.nominal_q[i])
+                m.dq = 0.0
+                m.Kp = self.KP_STAND
+                m.Kd = self.KD_STAND
+                m.tau = 0.0
+            self.safe.PowerProtect(self.cmd, self.state, 1)
+            self.udp.SetSend(self.cmd)
+            self.udp.Send()
 
-        time.sleep(self.dt)
+            time.sleep(self.dt)
 
-        return self._get_obs(-1)
+            return self._get_obs(-1)
 
     # ------------------------ STEP ------------------------
     # def step(self, action, episode):

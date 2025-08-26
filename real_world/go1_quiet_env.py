@@ -11,7 +11,10 @@ import robot_interface as sdk
 
 class Go1QuietEnv:
     LOWLEVEL = 0xff
-    SCALE = 0.05  # rad max delta per step
+    CTRL_HZ_DEFAULT = 50.0
+    DT_MIN = 1.0 / 400.0
+    DT_MAX = 1.0 / 20.0
+
     TORQUE_SCALE = 0.1  # fraction of MAX_TORQUE
     MAX_TORQUE = np.array([
         10.0, 20.0, 20.0,  # front-left leg
@@ -20,17 +23,50 @@ class Go1QuietEnv:
         10.0, 20.0, 20.0   # rear-right leg
     ], dtype=np.float32)
 
-    def __init__(self, pose_file, device_index=10, db_calibration_offset=0, sample_rate=48000, control_hz=50.0):
+    # PD gains (soft)
+    KP_STAND = 12.0
+    KD_STAND = 1.0
+
+    # Policy PD gains (a bit stiffer)
+    KP_POLICY = 20.0
+    KD_POLICY = 1.2
+
+    # Torque clamp
+    TORQUE_SCALE = 0.0  
+
+    #Foot contact threshold (N)
+    CONTACT_THRESH = 5.0
+
+    # Supervisor thresholds
+    NEED_CONTACTS = 3               # >= 3 feet in contact…
+    CONTACT_STREAK_TO_WALK = 10     
+    AIRBORNE_MAX_STEPS = 2          
+
+    # Action filtering
+    ACTION_LP_ALPHA = 0.3           # EMA smoothing for policy actions
+
+
+    def __init__(self, pose_file, device_index=10, db_calibration_offset=0, sample_rate=48000, control_hz=CTRL_HZ_DEFAULT):
         # --- Robot setup ---
-        self.pose = np.load(pose_file).astype(float)
-        assert self.pose.size == 12, "pose file must contain 12 joint angles"
-        self.dt = 1.0 / control_hz
+        self.nominal_q = np.load(pose_file).astype(float)
+        assert self.nominal_q.size == 12, "pose file must contain 12 joint angles"
+        self.dt = float(np.clip(1.0 / control_hz, self.DT_MIN, self.DT_MAX))
         self._step = 0
         self.device_index = device_index
         self.db_calibration_offset = db_calibration_offset
         self.sample_rate = sample_rate
         self.samples_per_step = int(sample_rate * self.dt)
-        self.optitrack = Optitrack()
+
+        # state for supervisor
+        self.mode = "GROUND"  # "GROUND" or "WALK"
+        self.contact_streak = 0
+        self.airborne_steps = 0
+        self.prev_contacts = np.zeros(4, dtype=bool)
+        self.prev_position = None  # for velocity estimate
+        self.prev_time = None
+
+        # action filter state
+        self.prev_action = np.zeros(12, dtype=np.float32)
 
         # UDP/SDK objects
         self.udp = sdk.UDP(self.LOWLEVEL, 8080, "192.168.123.10", 8007)
@@ -39,27 +75,22 @@ class Go1QuietEnv:
         self.state = sdk.LowState()
         self.udp.InitCmdData(self.cmd)
 
-        # mic buffer
+        # mic
         self.mic_buf = np.zeros((0,), dtype=np.float32)
         self.stream = None
-
-        # Design low-pass for footstep band
         self.low_band_b, self.low_band_a = scipy.signal.butter(
             4, [50/(sample_rate/2), 200/(sample_rate/2)], btype='band')
 
-        # data storage
+        # external tracking
+        self.optitrack = Optitrack()
+
+        # logs
         self.positions = {}
         self.db_vals = {}
         self.rms_vals = {}
         self.observations = {}
 
-        # airborne termination counter
-        self.airborne_steps = 0
-        self.airborne_max_steps = 2  # require N consecutive steps with no contact
-
-    # ------------------------ MIC ------------------------
     def design_a_weighting(self, fs: int):
-        """Return (b, a) IIR filter coefficients approximating A-weighting."""
         f1, f2, f3, f4 = 20.598997, 107.65265, 737.86223, 12194.217
         A1000 = 1.9997
         NUMs = [(2*math.pi*f4)**2 * (10**(A1000/20)), 0, 0, 0, 0]
@@ -74,7 +105,6 @@ class Go1QuietEnv:
         def callback(indata, frames, time_info, status):
             if status:
                 print("[MIC] Status:", status)
-            # append new mono samples
             self.mic_buf = np.concatenate((self.mic_buf, indata[:, 0]))
 
         self.stream = sd.InputStream(
@@ -97,15 +127,12 @@ class Go1QuietEnv:
             db_a = -np.inf
             low_band_rms = 0.0
         else:
-            # overall RMS -> dB
             rms = np.sqrt(np.mean(mic_samples**2))
             db = 20*np.log10(rms+1e-12) + self.db_calibration_offset
-            # A-weighting filter
             b, a = self.design_a_weighting(self.sample_rate)
             weighted = scipy.signal.lfilter(b, a, mic_samples)
             rms_a = np.sqrt(np.mean(weighted**2))
             db_a = 20*np.log10(rms_a+1e-12) + self.db_calibration_offset
-            # low-frequency band RMS
             low = scipy.signal.lfilter(self.low_band_b, self.low_band_a, mic_samples)
             low_band_rms = np.sqrt(np.mean(low**2))
         return db_a, low_band_rms
@@ -116,7 +143,7 @@ class Go1QuietEnv:
             self.mic_buf = self.mic_buf[self.samples_per_step:]
             return window
         return np.zeros((0,), dtype=np.float32)
-
+    
     # ------------------------ RESET/STAND ------------------------
     def reset(self):
         # Stand up with ramp (keeps original behavior)
@@ -149,38 +176,152 @@ class Go1QuietEnv:
         #     time.sleep(self.dt)
 
         # Flush mic buffer so first step starts fresh
-        self.mic_buf = np.zeros((0,), dtype=np.float32)
-        # reset airborne counter
-        self.airborne_steps = 0
+        # self.mic_buf = np.zeros((0,), dtype=np.float32)
+        # # reset airborne counter
+        # self.airborne_steps = 0
 
-        # Read a fresh state and return initial obs
-        self.udp.Recv()
-        self.udp.GetRecv(self.state)
+        # # Read a fresh state and return initial obs
+        # self.udp.Recv()
+        # self.udp.GetRecv(self.state)
         
-        return self._get_obs(-1)
+        # return self._get_obs(-1)
 
-    # ------------------------ STEP ------------------------
-    def step(self, action, episode):
-        # First update robot state BEFORE computing targets
+        def reset(self):
+        self.mic_buf = np.zeros((0,), dtype=np.float32)
+        self._step = 0
+        self.mode = "GROUND"
+        self.contact_streak = 0
+        self.airborne_steps = 0
+        self.prev_contacts[:] = False
+        self.prev_position = None
+        self.prev_time = None
+        self.prev_action[:] = 0.0
+
+        # Read state
         self.udp.Recv()
         self.udp.GetRecv(self.state)
 
-        current_q = np.array([m.q for m in self.state.motorState[:12]])
-
-        # Compute new targets
-        q_targets = current_q + np.clip(action, -1.0, 1.0) * self.SCALE
-        tau_targets = np.clip(action, -1.0, 1.0) * self.MAX_TORQUE * self.TORQUE_SCALE
-
+        # Immediately command nominal stand
         for i in range(12):
             m = self.cmd.motorCmd[i]
-            # hybrid control: PD target with small torque injection
-            m.q, m.dq, m.Kp, m.Kd, m.tau = q_targets[i], 0.0, 12.0, 1.0, float(tau_targets[i])
-
+            m.q = float(self.nominal_q[i])
+            m.dq = 0.0
+            m.Kp = self.KP_STAND
+            m.Kd = self.KD_STAND
+            m.tau = 0.0
         self.safe.PowerProtect(self.cmd, self.state, 1)
         self.udp.SetSend(self.cmd)
         self.udp.Send()
 
-        # Wait for the effect of the command, then read state again so obs reflect new contact/forces
+        time.sleep(self.dt)
+
+        return self._get_obs(-1)
+
+    # ------------------------ STEP ------------------------
+    # def step(self, action, episode):
+    #     # First update robot state BEFORE computing targets
+    #     self.udp.Recv()
+    #     self.udp.GetRecv(self.state)
+
+    #     current_q = np.array([m.q for m in self.state.motorState[:12]])
+
+    #     # Compute new targets
+    #     q_targets = current_q + np.clip(action, -1.0, 1.0) * self.SCALE
+    #     tau_targets = np.clip(action, -1.0, 1.0) * self.MAX_TORQUE * self.TORQUE_SCALE
+
+    #     for i in range(12):
+    #         m = self.cmd.motorCmd[i]
+    #         # hybrid control: PD target with small torque injection
+    #         m.q, m.dq, m.Kp, m.Kd, m.tau = q_targets[i], 0.0, 12.0, 1.0, float(tau_targets[i])
+
+    #     self.safe.PowerProtect(self.cmd, self.state, 1)
+    #     self.udp.SetSend(self.cmd)
+    #     self.udp.Send()
+
+    #     # Wait for the effect of the command, then read state again so obs reflect new contact/forces
+    #     time.sleep(self.dt)
+    #     self.udp.Recv()
+    #     self.udp.GetRecv(self.state)
+
+    #     self._step += 1
+
+    #     obs = self._get_obs(episode)
+
+    #     # airborne detection: require N consecutive steps with no contact
+    #     contact_count = float(np.array(obs["contacts"]).sum())
+    #     if contact_count == 0:
+    #         self.airborne_steps += 1
+    #     else:
+    #         self.airborne_steps = 0
+
+    #     done_tilt = self._check_tilt(obs)
+    #     done_airborne = (self.airborne_steps >= self.airborne_max_steps)
+    #     done = bool(done_tilt or done_airborne)
+
+    #     return obs, 0.0, done, {}
+
+    def step(self, action, episode):
+        # Read current state first
+        self.udp.Recv()
+        self.udp.GetRecv(self.state)
+
+        # Get fresh contacts
+        contacts_bool = self._read_contacts_bool()
+        contact_count = int(np.sum(contacts_bool))
+
+        # Supervisor transitions
+        if self.mode == "GROUND":
+            if contact_count >= self.NEED_CONTACTS:
+                self.contact_streak += 1
+                if self.contact_streak >= self.CONTACT_STREAK_TO_WALK:
+                    self.mode = "WALK"
+                    self.contact_streak = 0
+            else:
+                self.contact_streak = 0
+        else:  # WALK
+            if contact_count == 0:
+                self.airborne_steps += 1
+                if self.airborne_steps >= self.AIRBORNE_MAX_STEPS:
+                    self.mode = "GROUND"
+                    self.airborne_steps = 0
+            else:
+                self.airborne_steps = 0
+
+        # Compute command according to mode
+        if self.mode == "GROUND":
+            # Ignore policy: hold nominal stance (feet down)
+            q_targets = self.nominal_q.copy()
+            kp, kd = self.KP_STAND, self.KD_STAND
+            tau_targets = np.zeros(12, dtype=np.float32)
+        else:
+            # WALK: smooth the action and map to absolute targets around nominal
+            a = np.clip(np.asarray(action, dtype=np.float32), -1.0, 1.0)
+            a = self.ACTION_LP_ALPHA * a + (1.0 - self.ACTION_LP_ALPHA) * self.prev_action
+            self.prev_action = a
+
+            q_targets = self.nominal_q + self.ACTION_SCALE * a
+            kp, kd = self.KP_POLICY, self.KD_POLICY
+
+            if self.TORQUE_SCALE > 0.0:
+                # optional torque injection (rarely needed for first trials)
+                tau_targets = np.clip(a, -1.0, 1.0) * self.TORQUE_SCALE
+                tau_targets = tau_targets.astype(np.float32)
+            else:
+                tau_targets = np.zeros(12, dtype=np.float32)
+
+        # Send to robot
+        for i in range(12):
+            m = self.cmd.motorCmd[i]
+            m.q = float(q_targets[i])
+            m.dq = 0.0
+            m.Kp = kp
+            m.Kd = kd
+            m.tau = float(tau_targets[i])
+        self.safe.PowerProtect(self.cmd, self.state, 1)
+        self.udp.SetSend(self.cmd)
+        self.udp.Send()
+
+        # Wait, then read state again so obs reflect new contacts & motion
         time.sleep(self.dt)
         self.udp.Recv()
         self.udp.GetRecv(self.state)
@@ -189,57 +330,56 @@ class Go1QuietEnv:
 
         obs = self._get_obs(episode)
 
-        # airborne detection: require N consecutive steps with no contact
-        contact_count = float(np.array(obs["contacts"]).sum())
-        if contact_count == 0:
+        # Terminations: tilt or fully airborne for a couple steps
+        done_tilt = self._check_tilt(obs)
+        if int(np.sum(obs["contacts"])) == 0:
             self.airborne_steps += 1
         else:
             self.airborne_steps = 0
+        done_airborne = (self.airborne_steps >= self.AIRBORNE_MAX_STEPS)
 
-        done_tilt = self._check_tilt(obs)
-        done_airborne = (self.airborne_steps >= self.airborne_max_steps)
         done = bool(done_tilt or done_airborne)
-
         return obs, 0.0, done, {}
 
     # ------------------------ OBSERVATION ------------------------
     def _get_obs(self, episode):
-        # Basic proprio
         roll = float(self.state.imu.rpy[0])
         pitch = float(self.state.imu.rpy[1])
         yaw = float(self.state.imu.rpy[2])
-        gyro = np.array(self.state.imu.gyroscope)
-        acc = np.array(self.state.imu.accelerometer)
-        q = np.array([m.q for m in self.state.motorState[:12]])
-        dq = np.array([m.dq for m in self.state.motorState[:12]])
-        # try to read estimated torques if available
+        gyro = np.array(self.state.imu.gyroscope, dtype=np.float32)
+        acc = np.array(self.state.imu.accelerometer, dtype=np.float32)
+        q = np.array([m.q for m in self.state.motorState[:12]], dtype=np.float32)
+        dq = np.array([m.dq for m in self.state.motorState[:12]], dtype=np.float32)
+
+        # torques (estimated if available)
         taus = []
         for m in self.state.motorState[:12]:
             tau_val = getattr(m, 'tauEst', None)
             if tau_val is None:
                 tau_val = getattr(m, 'tau', 0.0)
             taus.append(tau_val)
-        taus = np.array(taus, dtype=np.float32)
+        tau = np.array(taus, dtype=np.float32)
 
-        # contact detection from foot force sensors
-        try:
-            contacts = np.array([fs for fs in self.state.footForce], dtype=np.float32) > 5.0
-        except Exception:
-            # fallback if structure differs
-            contacts = np.zeros((4,), dtype=np.float32)
+        # foot force contacts
+        contacts_bool = self._read_contacts_bool()
+        contacts = contacts_bool.astype(np.float32)
 
-        # Mic features over last control window
+        # mic features
         db_a, low_band_rms = self.compute_db_and_rms()
 
-        # Optitrack position (may return (pos, quat) or just pos)
-        try:
-            pos = self.optitrack.optiTrackGetPos()
-            if isinstance(pos, tuple) or isinstance(pos, list):
-                position = np.array(pos[0], dtype=np.float32)
-            else:
-                position = np.array(pos, dtype=np.float32)
-        except Exception:
-            position = np.array([0.0, 0.0, 0.0], dtype=np.float32)
+        # OptiTrack pos & velocity (x forward)
+        position = self._read_position()
+        base_vel_x = 0.0
+        tnow = time.time()
+        if self.prev_position is not None and self.prev_time is not None:
+            dt = max(1e-3, tnow - self.prev_time)
+            base_vel_x = float((position[0] - self.prev_position[0]) / dt)
+        self.prev_position = position.copy()
+        self.prev_time = tnow
+
+        # crude contact impulse proxy: sum of changes in foot contact binary
+        contact_impulse = float(np.sum(np.abs(contacts_bool.astype(int) - self.prev_contacts.astype(int))))
+        self.prev_contacts = contacts_bool
 
         observations = {
             "base_rpy": (roll, pitch, yaw),
@@ -247,18 +387,21 @@ class Go1QuietEnv:
             "base_acc": acc,
             "q": q,
             "dq": dq,
-            "tau": taus,
-            "contacts": contacts.astype(np.float32),
+            "tau": tau,
+            "contacts": contacts,
             "mic_feats": np.array([db_a, low_band_rms], dtype=np.float32),
             "position": position,
-            "fall": False
+            "base_vel_x": base_vel_x,
+            "contact_impulse": contact_impulse,
+            "mode": self.mode,
+            "fall": False,
         }
 
-        # store time-series data
+        # store traces
         self._append_or_add(self.positions, episode, position)
         self._append_or_add(self.db_vals, episode, db_a)
         self._append_or_add(self.rms_vals, episode, low_band_rms)
-        if episode in self.observations.keys():
+        if episode in self.observations:
             self.observations[episode][self._step] = observations
         else:
             self.observations[episode] = {self._step: observations}
@@ -266,8 +409,7 @@ class Go1QuietEnv:
         return observations
 
     def obs_vector(self, obs: Dict[str, Any]) -> np.ndarray:
-        base_rpy = obs["base_rpy"]
-        r, p, y = base_rpy
+        r, p, y = obs["base_rpy"]
         ori = [math.sin(y), math.cos(y), math.sin(p), math.cos(p), math.sin(r), math.cos(r)]
         gyro = obs["base_gyro"]
         acc = obs["base_acc"]
@@ -283,7 +425,7 @@ class Go1QuietEnv:
 
     # ------------------------ REWARD ------------------------
     def compute_reward(self, prev, curr, cfg: SACConfig):
-        # --- sound penalties (normalized) ---
+        # --- sound penalties ---
         db_a = float(curr["mic_feats"][0])
         quiet_threshold = 40.0
         loud_threshold = 80.0
@@ -303,15 +445,14 @@ class Go1QuietEnv:
         tau = np.asarray(curr.get("tau", np.zeros_like(dq)), dtype=np.float32)
         r_energy = -0.0005 * cfg.w_energy * float(np.mean(np.abs(tau * dq)))
 
-        # --- posture & upright bonus / airborne penalty ---
+        # --- posture ---
         roll, pitch, _ = curr["base_rpy"]
         pr = -0.05 * cfg.w_posture * (abs(roll) + abs(pitch))
 
-        # --- forward motion / movement ---
+        # --- forward motion ---
         vx = float(curr.get("base_vel_x", 0.0))
         r_track = cfg.w_movement * vx
 
-        # use optitrack displacement if available
         r_move = 0.0
         if prev is not None and ("position" in prev) and ("position" in curr):
             try:
@@ -322,29 +463,24 @@ class Go1QuietEnv:
                 r_move = 0.0
 
         # --- ground contact ---
-        contacts = np.array(curr["contacts"])  # shape (4,)
+        contacts = np.array(curr["contacts"])
         contact_count = float(np.sum(contacts))
         r_contact = cfg.w_contact * contact_count
 
-        # airborne penalty (termination handled in step)
-        if contact_count == 0:
-            r_airborne = -cfg.w_airborne
-        else:
-            r_airborne = cfg.w_bonus_upright
+        # airborne penalty vs upright bonus
+        r_airborne = -cfg.w_airborne if contact_count == 0 else cfg.w_bonus_upright
 
-        # --- alternating gait reward ---
+        # --- alternating gait bonus (simple diagonal pattern) ---
         fl, fr, rl, rr = contacts
         diag1 = fl + rr
         diag2 = fr + rl
-        # reward when one diagonal pair is down and the other up
         r_gait = cfg.w_gait * float(((diag1 == 2) and (diag2 == 0)) or ((diag2 == 2) and (diag1 == 0)))
 
-        # --- joint limit penalty (prevent extreme joint angles / crossing) ---
+        # --- joint limit penalty ---
         q = np.asarray(curr["q"][:12], dtype=np.float32)
         q_min, q_max = -1.5, 1.5
         r_joint_limit = -0.1 * float(np.sum((q < q_min) | (q > q_max)))
 
-        # --- total reward ---
         total = (
             r_spl + r_band + r_impact + r_dq + r_energy + pr +
             r_airborne + r_track + r_move + r_contact + r_gait + r_joint_limit
@@ -355,22 +491,33 @@ class Go1QuietEnv:
             r_dq=r_dq, r_energy=r_energy, r_posture=pr,
             r_alive=r_airborne, r_track=r_track, r_move=r_move,
             r_contact=r_contact, r_gait=r_gait, r_joint_limit=r_joint_limit,
-            db_a=db_a, low_band=low_band, vx=vx
+            db_a=db_a, low_band=low_band, vx=vx, mode=curr.get("mode", "NA")
         )
         return float(total), info
 
     # ------------------------ SAFETY ------------------------
     def _check_tilt(self, obs):
         roll, pitch, _ = obs["base_rpy"]
-        if abs(roll) > np.radians(25) or abs(pitch) > np.radians(25):
-            return True
-        return False
+        return (abs(roll) > np.radians(25)) or (abs(pitch) > np.radians(25))
 
-    def _check_safety(self, obs):
-        # kept for compatibility; main termination uses tilt + airborne counter
-        return self._check_tilt(obs)
+    # ------------------------ HELPERS ------------------------
+    def _read_contacts_bool(self) -> np.ndarray:
+        """Return boolean array (4,) for foot contact using foot force sensors."""
+        try:
+            ff = np.array([fs for fs in self.state.footForce], dtype=np.float32)
+            return ff > self.CONTACT_THRESH
+        except Exception:
+            return np.zeros((4,), dtype=bool)
 
-    # ------------------------ UTILS ------------------------
+    def _read_position(self) -> np.ndarray:
+        try:
+            pos = self.optitrack.optiTrackGetPos()
+            if isinstance(pos, (tuple, list)):
+                return np.array(pos[0], dtype=np.float32)
+            return np.array(pos, dtype=np.float32)
+        except Exception:
+            return np.array([0.0, 0.0, 0.0], dtype=np.float32)
+
     def _append_or_add(self, dict_obj, key, val):
         if key in dict_obj:
             dict_obj[key].append(val)

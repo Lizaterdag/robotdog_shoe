@@ -119,34 +119,8 @@ class Go1QuietEnv:
 
     # ------------------------ RESET/STAND ------------------------
     def reset(self):
-        # Stand up with ramp (keeps original behavior)
-        # KP0, KD0 = 4.0, 0.3
-        # KPH, KDH = 12.0, 1.0
-        # RAMP_SEC, HOLD_SEC = 3.0, 1.0
-        # t0 = time.time()
-        # while True:
-        #     now = time.time()
-        #     t = now - t0
-        #     self.udp.Recv()
-        #     self.udp.GetRecv(self.state)
-        #     if t < RAMP_SEC:
-        #         alpha = t / RAMP_SEC
-        #         kp = KP0 + alpha * (KPH - KP0)
-        #         kd = KD0 + alpha * (KDH - KD0)
-        #         for i in range(12):
-        #             q_target = self.state.motorState[i].q * (1 - alpha) + self.pose[i] * alpha
-        #             m = self.cmd.motorCmd[i]
-        #             m.q, m.dq, m.Kp, m.Kd, m.tau = q_target, 0.0, kp, kd, 0.0
-        #     elif t < RAMP_SEC + HOLD_SEC:
-        #         for i in range(12):
-        #             m = self.cmd.motorCmd[i]
-        #             m.q, m.dq, m.Kp, m.Kd, m.tau = self.pose[i], 0.0, KPH, KDH, 0.0
-        #     else:
-        #         break
-        #     self.safe.PowerProtect(self.cmd, self.state, 1)
-        #     self.udp.SetSend(self.cmd)
-        #     self.udp.Send()
-        #     time.sleep(self.dt)
+        # stand up
+        self.standup()
 
         # Flush mic buffer so first step starts fresh
         self.mic_buf = np.zeros((0,), dtype=np.float32)
@@ -402,3 +376,33 @@ class Go1QuietEnv:
 
         with open(os.path.join(dir, f"{run_name}_obs.json"), "w") as f:
             json.dump(obs, f)
+
+    def standup(self):
+        # Stand up with ramp
+        KP0, KD0 = 4.0, 0.3
+        KPH, KDH = 12.0, 1.0
+        RAMP_SEC, HOLD_SEC = 3.0, 1.0
+        t0 = time.time()
+        while True:
+            now = time.time()
+            t = now - t0
+            self.udp.Recv()
+            self.udp.GetRecv(self.state)
+            if t < RAMP_SEC:
+                alpha = t / RAMP_SEC
+                kp = KP0 + alpha * (KPH - KP0)
+                kd = KD0 + alpha * (KDH - KD0)
+                for i in range(12):
+                    q_target = self.state.motorState[i].q * (1 - alpha) + self.pose[i] * alpha
+                    m = self.cmd.motorCmd[i]
+                    m.q, m.dq, m.Kp, m.Kd, m.tau = q_target, 0.0, kp, kd, 0.0
+            elif t < RAMP_SEC + HOLD_SEC:
+                for i in range(12):
+                    m = self.cmd.motorCmd[i]
+                    m.q, m.dq, m.Kp, m.Kd, m.tau = self.pose[i], 0.0, KPH, KDH, 0.0
+            else:
+                break
+            self.safe.PowerProtect(self.cmd, self.state, 1)
+            self.udp.SetSend(self.cmd)
+            self.udp.Send()
+            time.sleep(self.dt)

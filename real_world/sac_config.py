@@ -23,16 +23,19 @@ class SACConfig:
     device_index: int = 11
 
     # Reward weights
-    w_spl: float = 1.0
-    w_band: float = 0.5
-    w_foot_impact: float = 0.1
-    w_joint_vel: float = 0.01
-    w_energy: float = 0.001
-    w_posture: float = 0.2
+    w_spl: float = 0.5
+    w_band: float = 0.2
+    w_foot_impact: float = 0.05
+    w_joint_vel: float = 0.001
+    w_energy: float = 0.0005
+    w_posture: float = 0.1
     w_bonus_upright: float = 0.05
+    w_airborne: float = 100.0
     target_speed_mps: float = 0.0
-    w_movement: float = 20.0
-    w_contact: float = 0.3
+    w_movement: float = 50.0
+    w_contact: float = 1.0
+    w_gait: float = 2.0
+
 
     # SAC hyperparameters
     gamma: float = 0.995

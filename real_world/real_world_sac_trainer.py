@@ -465,7 +465,7 @@ def train_on_robot(env: Go1QuietEnv, cfg: SACConfig, resume: bool = True):
     last_db, last_band = 0.0, 0.0
 
     for ep in range(start_ep, cfg.episodes + 1):
-        input(f"Checkpoint ep{ep}. Check battery and hang Go1 at 30cm + shoe height level with all four legs extended. Mic test: {env.compute_db_and_rms()}. Press Enter to continue...")
+        input(f"Checkpoint ep{ep}. Check battery and hang Go1 at 20cm + shoe height level with all four legs extended. Mic test: {env.compute_db_and_rms()}. Press Enter to continue...")
         raw = env.reset()
         prev = raw
         obs = env.obs_vector(raw)
@@ -489,6 +489,7 @@ def train_on_robot(env: Go1QuietEnv, cfg: SACConfig, resume: bool = True):
             # Step env
             nxt, _, done_flag, _ = env.step(act, ep)
             r, info = env.compute_reward(prev, nxt, cfg)
+            done_flag = info.get("terminated", False) or done_flag
             last_db, last_band = info["db_a"], info["low_band"]
 
             next_obs_vec = env.obs_vector(nxt)
